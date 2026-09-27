@@ -25,6 +25,7 @@ yolo11n.pt
 
 # Large trained model
 *.pt
+!models/best.pt
 
 # Streamlit cache
 .streamlit/
