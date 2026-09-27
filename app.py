@@ -33,7 +33,12 @@ st.write(
 # LOAD TRAINED MODEL
 # =========================================================
 
-model = YOLO("models/best.pt")
+@st.cache_resource
+def load_model():
+    return YOLO("models/best.pt")
+
+
+model = load_model()
 
 
 # =========================================================
@@ -64,26 +69,29 @@ if input_type == "Image":
 
         st.subheader("Original Image")
 
-        st.image(
-            image,
-            width="stretch"
-        )
+        # Fixed: no width="stretch"
+        st.image(image)
 
-        # Run YOLO
+        # =================================================
+        # RUN YOLO
+        # =================================================
+
         results = model.predict(
             image,
             conf=0.25
         )
 
-        # Detection result
+        # =================================================
+        # DETECTION RESULT
+        # =================================================
+
         result_image = results[0].plot()
 
         st.subheader("Detection Result")
 
         st.image(
             result_image,
-            channels="BGR",
-            width="stretch"
+            channels="BGR"
         )
 
         # =================================================
@@ -158,16 +166,31 @@ else:
         # YOLO TRACKING
         # =================================================
 
-        results = model.track(
-            source=temp_input.name,
-            conf=0.25,
-            tracker="bytetrack.yaml",
-            save=True,
-            persist=True
-        )
+        try:
+
+            results = model.track(
+                source=temp_input.name,
+                conf=0.25,
+                tracker="bytetrack.yaml",
+                save=True,
+                persist=True
+            )
+
+        except Exception as e:
+
+            st.error("Video tracking failed.")
+
+            st.exception(e)
+
+            try:
+                os.unlink(temp_input.name)
+            except Exception:
+                pass
+
+            st.stop()
 
         st.success(
-            "Video processing completed!"
+            "YOLO detection and tracking completed!"
         )
 
         # =================================================
@@ -178,31 +201,56 @@ else:
 
         video_files = []
 
-        for file_name in os.listdir(result_dir):
+        if os.path.exists(result_dir):
 
-            if file_name.lower().endswith(
-                (".mp4", ".avi", ".mov", ".mkv")
-            ):
+            for file_name in os.listdir(result_dir):
 
-                video_files.append(
-                    os.path.join(
-                        result_dir,
-                        file_name
+                if file_name.lower().endswith(
+                    (".mp4", ".avi", ".mov", ".mkv")
+                ):
+
+                    video_files.append(
+                        os.path.join(
+                            result_dir,
+                            file_name
+                        )
                     )
-                )
 
-        if video_files:
+        # =================================================
+        # CHECK OUTPUT
+        # =================================================
 
-            input_processed_video = video_files[0]
+        if not video_files:
 
-            # =================================================
-            # CONVERT TO BROWSER-FRIENDLY H.264 MP4
-            # =================================================
-
-            browser_video = os.path.join(
-                tempfile.gettempdir(),
-                "yolo_processed_h264.mp4"
+            st.error(
+                "YOLO finished processing, but the output video "
+                "could not be found."
             )
+
+            try:
+                os.unlink(temp_input.name)
+            except Exception:
+                pass
+
+            st.stop()
+
+        input_processed_video = video_files[0]
+
+        st.info(
+            f"YOLO output found: "
+            f"{os.path.basename(input_processed_video)}"
+        )
+
+        # =================================================
+        # CONVERT VIDEO TO H.264 MP4
+        # =================================================
+
+        browser_video = os.path.join(
+            tempfile.gettempdir(),
+            "yolo_processed_h264.mp4"
+        )
+
+        try:
 
             ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
@@ -228,48 +276,81 @@ else:
                 "Converting video for browser playback..."
             ):
 
-                subprocess.run(
+                process = subprocess.run(
                     command,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    check=True
+                    text=True
                 )
 
             # =================================================
-            # DISPLAY PROCESSED VIDEO
+            # CHECK FFMPEG RESULT
             # =================================================
 
-            st.subheader(
-                "Processed Video"
-            )
+            if process.returncode != 0:
 
-            with open(
-                browser_video,
-                "rb"
-            ) as video_file:
+                st.error(
+                    "Video conversion failed."
+                )
 
-                video_bytes = video_file.read()
+                st.code(
+                    process.stderr[-4000:]
+                )
 
-            st.video(
-                video_bytes,
-                format="video/mp4"
-            )
+                st.info(
+                    "YOLO tracking itself completed successfully."
+                )
 
-            st.success(
-                "YOLO detection and object tracking "
-                "are visible in the processed video."
-            )
+            elif not os.path.exists(browser_video):
 
-        else:
+                st.error(
+                    "Converted video file was not created."
+                )
+
+            else:
+
+                # =================================================
+                # DISPLAY PROCESSED VIDEO
+                # =================================================
+
+                st.subheader(
+                    "Processed Video"
+                )
+
+                with open(
+                    browser_video,
+                    "rb"
+                ) as video_file:
+
+                    video_bytes = video_file.read()
+
+                st.video(
+                    video_bytes,
+                    format="video/mp4"
+                )
+
+                st.success(
+                    "Processed video displayed successfully "
+                    "with YOLO tracking IDs."
+                )
+
+        except Exception as e:
 
             st.error(
-                "Processed video could not be found."
+                "An error occurred while preparing the video."
             )
+
+            st.exception(e)
 
         # =================================================
         # CLEAN TEMPORARY INPUT
         # =================================================
 
-        os.unlink(
-            temp_input.name
-        )
+        try:
+
+            os.unlink(
+                temp_input.name
+            )
+
+        except Exception:
+            pass
