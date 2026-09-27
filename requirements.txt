@@ -3,4 +3,5 @@ streamlit
 opencv-python-headless
 pillow
 numpy
+lap>=0.5.13
 imageio-ffmpeg
