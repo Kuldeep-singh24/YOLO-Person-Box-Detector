@@ -69,7 +69,6 @@ if input_type == "Image":
 
         st.subheader("Original Image")
 
-        # Fixed: no width="stretch"
         st.image(image)
 
         # =================================================
@@ -197,7 +196,9 @@ else:
         # FIND YOLO OUTPUT VIDEO
         # =================================================
 
-        result_dir = str(results[0].save_dir)
+        result_dir = str(
+            results[0].save_dir
+        )
 
         video_files = []
 
@@ -317,15 +318,12 @@ else:
                     "Processed Video"
                 )
 
-                with open(
-                    browser_video,
-                    "rb"
-                ) as video_file:
-
-                    video_bytes = video_file.read()
+                # IMPORTANT:
+                # Pass the file path directly.
+                # Do NOT read the complete video into RAM.
 
                 st.video(
-                    video_bytes,
+                    browser_video,
                     format="video/mp4"
                 )
 
