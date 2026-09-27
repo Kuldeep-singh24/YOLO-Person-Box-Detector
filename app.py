@@ -5,6 +5,7 @@ import tempfile
 import os
 import subprocess
 import imageio_ffmpeg
+import cv2
 
 
 # =========================================================
@@ -161,23 +162,151 @@ else:
 
         st.subheader("Processing Video...")
 
+        output_video = os.path.join(
+            tempfile.gettempdir(),
+            "yolo_tracking_output.mp4"
+        )
+
+        # Remove previous output if it exists
+        if os.path.exists(output_video):
+            try:
+                os.remove(output_video)
+            except Exception:
+                pass
+
         # =================================================
-        # YOLO TRACKING
+        # OPEN INPUT VIDEO
         # =================================================
+
+        cap = cv2.VideoCapture(
+            temp_input.name
+        )
+
+        if not cap.isOpened():
+
+            st.error(
+                "Could not open uploaded video."
+            )
+
+            try:
+                os.unlink(temp_input.name)
+            except Exception:
+                pass
+
+            st.stop()
+
+        fps = cap.get(
+            cv2.CAP_PROP_FPS
+        )
+
+        width = int(
+            cap.get(
+                cv2.CAP_PROP_FRAME_WIDTH
+            )
+        )
+
+        height = int(
+            cap.get(
+                cv2.CAP_PROP_FRAME_HEIGHT
+            )
+        )
+
+        total_frames = int(
+            cap.get(
+                cv2.CAP_PROP_FRAME_COUNT
+            )
+        )
+
+        cap.release()
+
+        if fps <= 0:
+            fps = 30
+
+        # =================================================
+        # VIDEO WRITER
+        # =================================================
+
+        fourcc = cv2.VideoWriter_fourcc(
+            *"mp4v"
+        )
+
+        writer = cv2.VideoWriter(
+            output_video,
+            fourcc,
+            fps,
+            (width, height)
+        )
+
+        if not writer.isOpened():
+
+            st.error(
+                "Could not create output video."
+            )
+
+            try:
+                os.unlink(temp_input.name)
+            except Exception:
+                pass
+
+            st.stop()
+
+        # =================================================
+        # PROCESS VIDEO FRAME-BY-FRAME
+        # =================================================
+
+        progress_bar = st.progress(0)
+
+        status_text = st.empty()
+
+        processed_frames = 0
 
         try:
 
-            results = model.track(
+            results_stream = model.track(
                 source=temp_input.name,
                 conf=0.25,
                 tracker="bytetrack.yaml",
-                save=True,
-                persist=True
+                persist=True,
+                stream=True,
+                verbose=False
             )
+
+            for result in results_stream:
+
+                # Draw bounding boxes and tracking IDs
+                annotated_frame = result.plot()
+
+                # Write frame to output video
+                writer.write(
+                    annotated_frame
+                )
+
+                processed_frames += 1
+
+                # Update progress
+                if total_frames > 0:
+
+                    progress = min(
+                        processed_frames / total_frames,
+                        1.0
+                    )
+
+                    progress_bar.progress(
+                        progress
+                    )
+
+                    status_text.text(
+                        f"Processing frame "
+                        f"{processed_frames}/{total_frames}"
+                    )
 
         except Exception as e:
 
-            st.error("Video tracking failed.")
+            writer.release()
+
+            st.error(
+                "Video tracking failed."
+            )
 
             st.exception(e)
 
@@ -188,44 +317,29 @@ else:
 
             st.stop()
 
+        finally:
+
+            writer.release()
+
+        progress_bar.progress(1.0)
+
+        status_text.text(
+            f"Processing completed: "
+            f"{processed_frames} frames"
+        )
+
         st.success(
             "YOLO detection and tracking completed!"
         )
 
         # =================================================
-        # FIND YOLO OUTPUT VIDEO
+        # CHECK OUTPUT VIDEO
         # =================================================
 
-        result_dir = str(
-            results[0].save_dir
-        )
-
-        video_files = []
-
-        if os.path.exists(result_dir):
-
-            for file_name in os.listdir(result_dir):
-
-                if file_name.lower().endswith(
-                    (".mp4", ".avi", ".mov", ".mkv")
-                ):
-
-                    video_files.append(
-                        os.path.join(
-                            result_dir,
-                            file_name
-                        )
-                    )
-
-        # =================================================
-        # CHECK OUTPUT
-        # =================================================
-
-        if not video_files:
+        if not os.path.exists(output_video):
 
             st.error(
-                "YOLO finished processing, but the output video "
-                "could not be found."
+                "Output video was not created."
             )
 
             try:
@@ -235,21 +349,42 @@ else:
 
             st.stop()
 
-        input_processed_video = video_files[0]
+        output_size = os.path.getsize(
+            output_video
+        )
+
+        if output_size == 0:
+
+            st.error(
+                "Output video is empty."
+            )
+
+            try:
+                os.unlink(temp_input.name)
+            except Exception:
+                pass
+
+            st.stop()
 
         st.info(
-            f"YOLO output found: "
-            f"{os.path.basename(input_processed_video)}"
+            f"Processed {processed_frames} frames successfully."
         )
 
         # =================================================
-        # CONVERT VIDEO TO H.264 MP4
+        # CONVERT TO H.264
         # =================================================
 
         browser_video = os.path.join(
             tempfile.gettempdir(),
             "yolo_processed_h264.mp4"
         )
+
+        if os.path.exists(browser_video):
+
+            try:
+                os.remove(browser_video)
+            except Exception:
+                pass
 
         try:
 
@@ -259,7 +394,7 @@ else:
                 ffmpeg_path,
                 "-y",
                 "-i",
-                input_processed_video,
+                output_video,
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -274,7 +409,7 @@ else:
             ]
 
             with st.spinner(
-                "Converting video for browser playback..."
+                "Preparing video for browser playback..."
             ):
 
                 process = subprocess.run(
@@ -285,7 +420,7 @@ else:
                 )
 
             # =================================================
-            # CHECK FFMPEG RESULT
+            # CHECK FFMPEG
             # =================================================
 
             if process.returncode != 0:
@@ -298,10 +433,6 @@ else:
                     process.stderr[-4000:]
                 )
 
-                st.info(
-                    "YOLO tracking itself completed successfully."
-                )
-
             elif not os.path.exists(browser_video):
 
                 st.error(
@@ -311,7 +442,7 @@ else:
             else:
 
                 # =================================================
-                # DISPLAY PROCESSED VIDEO
+                # DISPLAY VIDEO
                 # =================================================
 
                 st.subheader(
@@ -320,7 +451,7 @@ else:
 
                 # IMPORTANT:
                 # Pass the file path directly.
-                # Do NOT read the complete video into RAM.
+                # Do not load the entire video into RAM.
 
                 st.video(
                     browser_video,
@@ -345,10 +476,8 @@ else:
         # =================================================
 
         try:
-
             os.unlink(
                 temp_input.name
             )
-
         except Exception:
             pass
